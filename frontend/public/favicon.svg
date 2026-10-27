@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>MarketRecall AI logo</title>
+  <rect x="48" y="48" width="416" height="416" rx="88" fill="#1D1D1F"/>
+  <path d="M160 274 C176 292 199 302 223 292 C256 278 284 241 316 214 C330 202 343 194 357 190" fill="none" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="165" y="322" width="43" height="72" rx="21.5" fill="#FFFFFF"/>
+  <rect x="235" y="294" width="44" height="100" rx="22" fill="#FFFFFF"/>
+  <rect x="307" y="225" width="45" height="169" rx="22.5" fill="#2878F0"/>
+  <circle cx="357" cy="190" r="25" fill="#2878F0"/>
+</svg>

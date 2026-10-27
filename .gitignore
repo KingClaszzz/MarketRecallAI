@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+dist/
+*.db
+*.sqlite
+
+# local tooling and generated data
+.claude/
+backend/data/
+
+# planning docs (kept locally)
+PRD.MD
+PRD_draft_v1.md
+.pytest_cache/
+*.log
