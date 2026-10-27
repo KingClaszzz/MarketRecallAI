@@ -1,118 +1,120 @@
 # Deploy
 
-Backend di **Hugging Face Spaces** (Docker), frontend di **Vercel**. Urutannya: backend dulu (untuk dapat URL API), lalu frontend, lalu sambungkan keduanya lewat `CORS_ORIGINS` dan `APP_DOMAIN`.
+Semua gratis, tanpa kartu kredit:
+
+| Bagian | Layanan | Catatan |
+|---|---|---|
+| Backend (FastAPI + scheduler) | **Render**, free web service | 512 MB RAM, cukup (puncak sekitar 230 MB) |
+| Database | **Neon** Postgres, free | 0,5 GB storage, 100 CU-jam per bulan |
+| Keep-alive | **cron-job.org** | Ping tiap 10 menit supaya Render tidak tidur |
+| Frontend | **Vercel**, Hobby | Build statis |
 
 ```
-browser ──▶ Vercel (React build, statis)
+browser ──▶ Vercel (React build)
    │
-   └──── fetch /api/* ──▶ HF Space (FastAPI + scheduler, port 7860) ──▶ Tatum · Walrus · yjs · CoinGecko
+   └── fetch /api/* ──▶ Render (FastAPI + scheduler) ──▶ Neon Postgres
+                              ▲                    └──▶ Tatum · Walrus · yjs · CoinGecko
+        cron-job.org ── /api/ping tiap 10 menit
 ```
+
+Urutannya: database → backend → frontend → sambungkan.
 
 ## File yang dipakai
 
 | File | Fungsi |
 |---|---|
-| `deploy/huggingface/Dockerfile` | Image Python 3.12, jalan sebagai uid 1000, port 7860 |
-| `deploy/huggingface/start.sh` | Pilih lokasi database, seed data saat pertama jalan, lalu start uvicorn |
-| `deploy/huggingface/README.md` | Header konfigurasi Space (`sdk: docker`, `app_port: 7860`) |
-| `deploy/huggingface/.dockerignore` | `.env`, database lokal, tes dan frontend tidak masuk image |
+| `render.yaml` | Blueprint Render: service Docker gratis di Singapore, health check, daftar env |
+| `deploy/Dockerfile` | Image Python 3.12 untuk backend |
+| `deploy/start.sh` | Kalau database kosong: seed histori + restore dari Walrus; lalu start uvicorn di `$PORT` |
+| `.dockerignore` | Hanya `backend/` dan `start.sh` yang masuk image (tanpa `.env`, database lokal, tes) |
+| `backend/scripts/copy_db.py` | Salin database lokal ke Neon, sekali saja |
 | `frontend/vercel.json` | Rewrite SPA, header keamanan, cache aset |
 
-## 1. Backend di Hugging Face
+## 1. Database di Neon
 
-### Buat Space
+1. neon.com → daftar → **Create project**. Postgres versi terbaru, region **AWS Asia Pacific (Singapore)** supaya dekat dengan Render.
+2. Di **Connect**, matikan **Connection pooling**, lalu salin connection string. Bentuknya:
+   `postgresql://user:password@ep-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`
+3. Salin data lokal ke Neon (dari root project, PowerShell):
 
-1. huggingface.co → **New Space** → SDK **Docker** → template **Blank** → visibility **Public** (Space privat tidak bisa dipanggil dari browser).
-2. Hardware: **CPU basic** cukup.
-3. Disarankan: **Settings → Persistent storage** (paket kecil). Tanpa ini, database ada di dalam container dan **hilang setiap Space restart**: akun, kredit, sesi dan jurnal forecast ikut terhapus. Learned state tetap aman karena dibangun ulang dari Walrus.
+   ```powershell
+   .venv\Scripts\pip install -r backend\requirements.txt
+   .venv\Scripts\python backend\scripts\copy_db.py "postgresql://...neon.tech/neondb?sslmode=require"
+   ```
 
-### Isi repo Space
+   Script ini membuat tabel, menyalin semua baris (candle, onchain, forecast, memori, akun, kredit, sesi), lalu mengaktifkan RLS. Kalau target sudah berisi, script menolak menimpa.
 
-Repo Space berisi folder `backend/` plus empat file dari `deploy/huggingface/` di root-nya. Dari PowerShell, di folder induk project:
+   Kalau langkah ini dilewati, backend akan seed sendiri saat pertama start (backfill 90 hari + restore dari Walrus, butuh beberapa menit). Jurnal forecast dan akun akan mulai dari nol.
 
-```powershell
-git clone https://huggingface.co/spaces/<user>/<space> hf-space
-robocopy MarketRecall\backend hf-space\backend /E /XD data tests __pycache__ .pytest_cache
-Copy-Item MarketRecall\deploy\huggingface\Dockerfile, MarketRecall\deploy\huggingface\start.sh, MarketRecall\deploy\huggingface\README.md, MarketRecall\deploy\huggingface\.dockerignore hf-space\
-cd hf-space
-git add . ; git commit -m "Deploy MarketRecall API" ; git push
-```
+Simpan connection string ini; nanti dipakai sebagai `DATABASE_URL`. Jangan ditulis di file mana pun di repo.
 
-Saat `git push`, login dengan username HF dan **access token (write)** sebagai password.
+## 2. Backend di Render
 
-> `robocopy` dengan `/XD data` penting: `backend/data` berisi database lokal (alamat pengguna, sesi) dan tidak boleh ikut ke repo Space yang publik.
+1. Push repo ke GitHub dulu.
+2. render.com → **New → Blueprint** → hubungkan repo `MarketRecallAI`. Render membaca `render.yaml` dan menyiapkan service `marketrecall-api`.
+3. Isi nilai yang diminta (diambil dari `.env` lokalmu):
 
-### Secrets dan variables
-
-**Settings → Variables and secrets.** Semua nilai menjadi environment variable di container. Nilai rahasia diambil dari `.env` lokalmu, jangan ditulis di file mana pun.
-
-**Secrets:**
-
-| Nama | Catatan |
+| Nama | Nilai |
 |---|---|
+| `DATABASE_URL` | connection string Neon |
 | `TATUM_API_KEY` | wajib |
-| `MEMWAL_PRIVATE_KEY`, `MEMWAL_ACCOUNT_ID`, `MEMWAL_AGENT_ID` | wajib, untuk Walrus Memory |
-| `LLM_API_KEY` | wajib, yjs |
-| `COINGECKO_API_KEY` | opsional |
-| `ADMIN_TOKEN` | string acak panjang, misalnya dari `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `MEMWAL_PRIVATE_KEY`, `MEMWAL_ACCOUNT_ID`, `MEMWAL_AGENT_ID` | wajib |
+| `LLM_API_KEY` | wajib |
+| `COINGECKO_API_KEY` | opsional, boleh kosong |
+| `CORS_ORIGINS` | sementara `[]`, diisi di langkah 4 |
+| `APP_DOMAIN` | sementara `localhost`, diisi di langkah 4 |
 
-**Variables:**
+   `ADMIN_TOKEN` dibuat acak otomatis. `TRUST_PROXY`, `PROXY_HOPS` dan `EXPOSE_DOCS` sudah diisi oleh `render.yaml`.
 
-| Nama | Nilai |
-|---|---|
-| `CORS_ORIGINS` | `["https://<project>.vercel.app"]`; sementara isi `[]` sampai frontend jadi |
-| `APP_DOMAIN` | `<project>.vercel.app` (tanpa `https://`; muncul di pesan login wallet) |
-| `TRUST_PROXY` | `true` (Space berada di belakang proxy HF) |
-| `PROXY_HOPS` | `1` |
-| `EXPOSE_DOCS` | `false` |
-| `BACKFILL_DAYS` | `90` (opsional) |
+4. **Apply**. Build pertama sekitar 3–5 menit.
+5. Cek `https://marketrecall-api.onrender.com/api/health` (nama subdomain bisa berbeda; lihat di dashboard Render).
 
-Variabel lain di `.env.example` sudah punya default yang benar.
+### Keep-alive di cron-job.org
 
-### Start pertama
+Render gratis tidur setelah 15 menit tanpa request, dan scheduler ikut berhenti.
 
-Saat database belum ada, `start.sh` menjalankan:
+1. cron-job.org → daftar → **Create cronjob**.
+2. URL: `https://<service>.onrender.com/api/ping`, jadwal **setiap 10 menit**.
 
-1. `scripts/backfill.py --days 90`: candle dan snapshot onchain 90 hari terakhir.
-2. `scripts/wipe_restore.py`: membangun ulang learned state (credibility, episode, lesson) dari Walrus.
+`/api/ping` sengaja tidak menyentuh database. Jadi Neon tetap bisa tidur di sela-sela job per jam, dan kuota 100 CU-jam tidak habis. Render memberi 750 jam per bulan, cukup untuk satu service menyala terus.
 
-Proses ini butuh beberapa menit; status Space tetap **Building/Starting** sampai selesai (batas `startup_duration_timeout: 1h`). Setelah berhasil, file `marketrecall.db.seeded` dibuat dan start berikutnya langsung menyalakan API.
+## 3. Frontend di Vercel
 
-Cek: `https://<user>-<space>.hf.space/api/health` harus mengembalikan status ok.
-
-## 2. Frontend di Vercel
-
-1. vercel.com → **Add New Project** → import repo GitHub.
-2. **Root Directory**: `frontend`. Framework terdeteksi sebagai Vite; `vercel.json` sudah mengatur build dan output.
-3. **Environment Variables** (Production):
+1. vercel.com → **Add New Project** → import repo yang sama.
+2. **Root Directory**: `frontend`.
+3. **Environment Variables**:
 
 | Nama | Nilai |
 |---|---|
-| `VITE_API_BASE` | `https://<user>-<space>.hf.space` (tanpa `/` di akhir) |
-| `VITE_ENOKI_API_KEY` | opsional, untuk login Google |
-| `VITE_GOOGLE_CLIENT_ID` | opsional, untuk login Google |
+| `VITE_API_BASE` | `https://<service>.onrender.com` (tanpa `/` di akhir) |
+| `VITE_ENOKI_API_KEY` | opsional, login Google |
+| `VITE_GOOGLE_CLIENT_ID` | opsional, login Google |
 
-4. Deploy.
+4. **Deploy**.
 
-`VITE_API_BASE` dibaca saat build, termasuk untuk Content-Security-Policy (`connect-src`). Kalau URL backend berubah, **redeploy** frontend.
+`VITE_API_BASE` dibaca saat build, termasuk untuk Content-Security-Policy. Kalau URL backend berubah, redeploy frontend.
 
-## 3. Sambungkan
+## 4. Sambungkan
 
-1. Di Space, ubah `CORS_ORIGINS` ke `["https://<project>.vercel.app"]` dan `APP_DOMAIN` ke `<project>.vercel.app`. Kalau pakai custom domain, masukkan juga domain itu ke `CORS_ORIGINS`.
-2. Space akan restart otomatis. Tanpa persistent storage, restart ini menjalankan seed ulang.
-3. Login Google (opsional): tambahkan `https://<project>.vercel.app` ke *Authorized JavaScript origins* dan *redirect URIs* di Google Cloud Console, dan ke allowed origins di portal Enoki.
+1. Render → service → **Environment**:
+   - `CORS_ORIGINS` = `["https://<project>.vercel.app"]`
+   - `APP_DOMAIN` = `<project>.vercel.app`
+
+   Simpan; Render redeploy otomatis. Data aman karena ada di Neon.
+2. Login Google (opsional): tambahkan `https://<project>.vercel.app` ke *Authorized JavaScript origins* dan *redirect URIs* di Google Cloud Console, dan ke allowed origins di portal Enoki.
 
 ### Cek akhir
 
-- Halaman landing menampilkan forecast live (bukan "Loading…").
+- Landing menampilkan forecast live, bukan "Loading…".
 - DevTools → Console: tidak ada error CORS atau CSP.
-- Login dengan wallet: pesan yang ditandatangani menulis `Domain: <project>.vercel.app`.
+- Pesan login wallet menulis `Domain: <project>.vercel.app`.
 - Buka satu sesi, ajukan satu pertanyaan, lalu sign out.
+- Setelah lewat menit ke-00, Render → **Logs** menunjukkan job per jam berjalan.
 
 ## Catatan operasional
 
-- **Satu instance saja.** Jangan jalankan backend lokal dengan scheduler aktif bersamaan dengan Space: keduanya akan menulis episode yang sama ke Walrus dan menghabiskan kuota 150 tulisan per hari. Untuk development lokal, set `SCHEDULER_ENABLED=false`.
-- **Space gratis tidur** setelah 48 jam tanpa traffic, dan scheduler ikut berhenti. Saat bangun, collector mengisi gap candle sampai 168 jam. Untuk demo juri, buka Space beberapa jam sebelumnya.
-- **Rate limit** disimpan di memori dan reset saat restart. `PROXY_HOPS=1` mengambil IP dari entri paling kanan `X-Forwarded-For`. Kalau semua pengguna terkena 429 bersamaan, berarti IP proxy yang terbaca; naikkan ke `2`.
-- **Header keamanan:** backend mengirim header sendiri, dan `vercel.json` menambahkan `X-Frame-Options: DENY` dan `frame-ancestors 'none'` untuk frontend. Karena itu halaman Space di huggingface.co (yang memakai iframe) tampil kosong; pakai URL `*.hf.space` langsung.
-- **Update backend:** ulangi `robocopy` dan `git push` di folder `hf-space`. Database di persistent storage tidak tersentuh.
+- **Hanya satu scheduler.** Setelah Render jalan, backend lokal harus dijalankan dengan `SCHEDULER_ENABLED=false`. Kalau tidak, keduanya menulis episode yang sama ke Walrus dan menghabiskan kuota 150 tulisan per hari.
+- **Update:** push ke GitHub. Render (backend) dan Vercel (frontend) redeploy otomatis.
+- **Rate limit** disimpan di memori dan reset saat redeploy. Kalau semua pengguna kena "Too many requests" bersamaan, IP proxy yang terbaca; naikkan `PROXY_HOPS` ke `2`.
+- **Kalau ping berhenti**, Render tidur dan request pertama butuh sekitar satu menit. Collector mengisi gap candle sampai 168 jam saat bangun.
+- **Tes terhadap Postgres** secara lokal: set `TEST_DATABASE_URL` ke database kosong sebelum `pytest`. Database itu akan dihapus isinya.

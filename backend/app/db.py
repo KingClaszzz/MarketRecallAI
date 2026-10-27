@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import JSON, Column, Engine, Index, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Column, Engine, Index, UniqueConstraint
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 from app.config import get_settings
@@ -16,7 +16,7 @@ class Candle(SQLModel, table=True):
 
     source: str = Field(primary_key=True)  # tatum | binance
     symbol: str = Field(primary_key=True)
-    open_time: int = Field(primary_key=True)
+    open_time: int = Field(primary_key=True, sa_type=BigInteger)
     open: float
     high: float
     low: float
@@ -31,15 +31,15 @@ class Candle(SQLModel, table=True):
 class OnchainSnapshot(SQLModel, table=True):
     """Sui network state at the checkpoint closest to (not after) an hour boundary."""
 
-    hour_ts: int = Field(primary_key=True)  # hour boundary in ms (UTC)
-    checkpoint_seq: int
-    checkpoint_ts: int
-    total_tx: int
+    hour_ts: int = Field(primary_key=True, sa_type=BigInteger)  # hour boundary in ms (UTC)
+    checkpoint_seq: int = Field(sa_type=BigInteger)
+    checkpoint_ts: int = Field(sa_type=BigInteger)
+    total_tx: int = Field(sa_type=BigInteger)
     epoch: int
-    computation_cost: int
-    storage_cost: int
-    storage_rebate: int
-    reference_gas_price: int | None = None
+    computation_cost: int = Field(sa_type=BigInteger)
+    storage_cost: int = Field(sa_type=BigInteger)
+    storage_rebate: int = Field(sa_type=BigInteger)
+    reference_gas_price: int | None = Field(default=None, sa_type=BigInteger)
     ingested_at: datetime = Field(default_factory=utcnow)
 
 
@@ -57,7 +57,7 @@ class Forecast(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     asset: str = Field(index=True)
-    t: int = Field(index=True)  # decision time = close of the last 1h candle (ms)
+    t: int = Field(index=True, sa_type=BigInteger)  # decision time = close of the last 1h candle (ms)
     source: str = Field(default="live", index=True)  # live | backtest
     horizon_h: int
     close_at_t: float
@@ -103,7 +103,7 @@ class PolicyState(SQLModel, table=True):
     asset: str = Field(index=True)
     ts: datetime = Field(default_factory=utcnow, index=True)
     source: str  # bootstrap | live | restore
-    covers_until: int  # latest decision time t whose outcome is included (ms)
+    covers_until: int = Field(sa_type=BigInteger)  # latest decision time t whose outcome is included (ms)
     book: dict = Field(default_factory=dict, sa_column=Column(JSON))
     snapshot_id: str | None = None
 
@@ -144,7 +144,7 @@ class Pick(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     address: str = Field(index=True)
     asset: str = Field(index=True)
-    slot_t: int = Field(index=True)  # start of the 4h window
+    slot_t: int = Field(index=True, sa_type=BigInteger)  # start of the 4h window
     direction: str  # UP | DOWN (= DOWN_OR_FLAT)
     status: str = Field(default="PENDING", index=True)  # PENDING | WON | LOST | REFUNDED
     created_at: datetime = Field(default_factory=utcnow)
@@ -174,7 +174,7 @@ class PredictSession(SQLModel, table=True):
     mode: str  # own | model
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
-    slot_t: int
+    slot_t: int = Field(sa_type=BigInteger)
     forecast_id: int
     pick_id: int | None = None
     messages_used: int = 0
@@ -232,11 +232,23 @@ _engine: Engine | None = None
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        url = get_settings().database_url
+        url = normalize_url(get_settings().database_url)
         if url.startswith("sqlite:///"):
             Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-        _engine = create_engine(url, connect_args={"check_same_thread": False})
+            _engine = create_engine(url, connect_args={"check_same_thread": False})
+        else:
+            # small pool for a single process; pre_ping survives a serverless database suspending idle connections
+            _engine = create_engine(url, pool_size=3, max_overflow=2, pool_pre_ping=True, pool_recycle=300,
+                                    connect_args={"options": "-c timezone=GMT"})
     return _engine
+
+
+def normalize_url(url: str) -> str:
+    """Hosted Postgres hands out postgres:// or postgresql:// URLs; use the psycopg 3 driver for both."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url.removeprefix(prefix)
+    return url
 
 
 def init_db() -> None:
@@ -244,6 +256,10 @@ def init_db() -> None:
     _add_missing_columns()
     with get_engine().begin() as conn:  # create_all skips indexes on existing tables
         conn.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_pick_window ON pick (address, asset, slot_t)")
+        if conn.dialect.name == "postgresql":
+            # no policies: hosted data APIs (e.g. Supabase) see nothing, while the owning backend role is unaffected
+            for table in SQLModel.metadata.sorted_tables:
+                conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY')
 
 
 def _add_missing_columns() -> None:

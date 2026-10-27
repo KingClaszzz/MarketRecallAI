@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: marketrecall-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/ping
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: TATUM_API_KEY
+        sync: false
+      - key: MEMWAL_PRIVATE_KEY
+        sync: false
+      - key: MEMWAL_ACCOUNT_ID
+        sync: false
+      - key: MEMWAL_AGENT_ID
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_DOMAIN
+        sync: false
+      - key: TRUST_PROXY
+        value: "true"
+      - key: PROXY_HOPS
+        value: "1"
+      - key: EXPOSE_DOCS
+        value: "false"

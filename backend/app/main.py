@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import case
 from sqlmodel import desc, func, select
 
 from app.config import get_settings
@@ -91,6 +92,12 @@ async def harden(request: Request, call_next):
     if request.url.path.startswith(PRIVATE_PATHS):
         response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.get("/api/ping")
+def ping() -> dict:
+    """Keep-alive target: no database access, so a serverless database can still suspend."""
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -441,7 +448,7 @@ def leaderboard(limit: int = Query(20, ge=1, le=100)) -> dict:
     """Users ranked by hit rate (at least 3 resolved calls)."""
     with get_session() as session:
         rows = session.exec(
-            select(Pick.address, func.count(), func.sum(Pick.status == "WON"))
+            select(Pick.address, func.count(), func.sum(case((Pick.status == "WON", 1), else_=0)))
             .where(Pick.status.in_(["WON", "LOST"])).group_by(Pick.address)
         ).all()
     board = [

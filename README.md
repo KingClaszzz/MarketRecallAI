@@ -4,7 +4,7 @@ Hourly 4-hour direction forecasts for SUI, WAL and CETUS from a model that keeps
 
 ## Stack
 
-- **Backend:** Python 3.12, FastAPI, APScheduler, SQLite (SQLModel)
+- **Backend:** Python 3.12, FastAPI, APScheduler, SQLModel (SQLite locally, Postgres in production)
 - **Frontend:** React, Vite, TypeScript, Tailwind, @mysten/dapp-kit
 - **Data:** Tatum Data API (live 1h OHLCV), Tatum Sui gRPC (checkpoints, epoch), Binance public klines (historical backfill), CoinGecko (market overview)
 - **Memory:** Walrus Memory Mainnet via the `memwal` Python SDK
@@ -47,11 +47,11 @@ Open http://localhost:5173 for the landing page; `/app` is the signed-in dashboa
 - LLM input is prefiltered for advice and prompt-injection requests, and every reply is validated (numbers must come from the facts; no advice, links or wallet-scam wording). Failed replies fall back to a template.
 - Rate limits on sign-in, the guide and paid actions; 32 KB body limit; CORS restricted to `CORS_ORIGINS`.
 - The production build sets a Content-Security-Policy; `frontend/vercel.json` adds `X-Frame-Options` and `frame-ancestors`.
-- Deploy as a single backend process (SQLite, the scheduler and the rate limits assume it). Set `CORS_ORIGINS`, `APP_DOMAIN` and a random `ADMIN_TOKEN`; set `TRUST_PROXY=true` (with `PROXY_HOPS`) only behind a proxy you trust.
+- Deploy as a single backend process (the scheduler and the rate limits assume it). Set `CORS_ORIGINS`, `APP_DOMAIN` and a random `ADMIN_TOKEN`; set `TRUST_PROXY=true` (with `PROXY_HOPS`) only behind a proxy you trust.
 
 ## Deploy
 
-Backend on Hugging Face Spaces (Docker), frontend on Vercel: see [DEPLOY.md](DEPLOY.md).
+Backend on Render with Neon Postgres, frontend on Vercel: see [DEPLOY.md](DEPLOY.md).
 
 ## Scripts (from repo root)
 
@@ -61,6 +61,7 @@ Backend on Hugging Face Spaces (Docker), frontend on Vercel: see [DEPLOY.md](DEP
 | `backend/scripts/backtest.py [--no-onchain]` | Walk-forward backtest report (Amnesiac vs Recall, per voice, per regime) |
 | `backend/scripts/bootstrap.py` | Seed memory from the backtest, run the promotion gate, snapshot to Walrus (run once) |
 | `backend/scripts/wipe_restore.py [--all]` | Delete the local learned state and rebuild it from Walrus |
+| `backend/scripts/copy_db.py <postgres-url>` | Copy the local SQLite database into an empty Postgres |
 | `backend/scripts/check_walrus.py` | Read-only Walrus Memory auth check |
 | `backend/scripts/check_tatum_grpc.py` | List Sui gRPC services exposed by Tatum |
 | `backend/scripts/first_memory.py` | Write + recall one memory on Walrus Mainnet |

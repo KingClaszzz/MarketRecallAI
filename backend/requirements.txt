@@ -14,3 +14,4 @@ pandas
 numpy
 scikit-learn
 pytest
+psycopg[binary]==3.2.10
