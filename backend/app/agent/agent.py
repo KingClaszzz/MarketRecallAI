@@ -34,15 +34,18 @@ def _complete(messages: list[dict], facts: dict, max_words: int, question: str =
     if not s.llm_api_key:
         return None, ["llm not configured"]
     try:
-        # yjs serves agnes-3.0-flash on Chat Completions; its Responses endpoint returns upstream errors.
         with tracked("llm", "chat.completions.create"):
             response = _client().chat.completions.create(
                 model=s.llm_model,
                 messages=[{"role": "system", "content": system or system_prompt()}, *messages],
                 temperature=0.2,
                 max_tokens=max_words * 3,
+                # reasoning models can spend the whole token budget thinking and return no answer
+                extra_body={"thinking": {"type": "disabled"}} if s.llm_disable_thinking else None,
             )
         text = (response.choices[0].message.content or "").strip()
+        if not text or text.startswith("[No answer"):  # some gateways put their error in the content
+            return None, ["llm empty reply"]
     except Exception as exc:
         log.warning("llm unavailable, using template: %s", exc)
         return None, [f"llm error: {type(exc).__name__}"]

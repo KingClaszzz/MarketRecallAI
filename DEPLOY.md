@@ -13,7 +13,7 @@ Semua gratis, tanpa kartu kredit:
 browser ──▶ Vercel (React build)
    │
    └── fetch /api/* ──▶ Render (FastAPI + scheduler) ──▶ Neon Postgres
-                              ▲                    └──▶ Tatum · Walrus · yjs · CoinGecko
+                              ▲                    └──▶ Tatum · Walrus · LLM · CoinGecko
         cron-job.org ── /api/ping tiap 10 menit
 ```
 

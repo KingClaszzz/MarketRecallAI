@@ -8,7 +8,7 @@ Hourly 4-hour direction forecasts for SUI, WAL and CETUS from a model that keeps
 - **Frontend:** React, Vite, TypeScript, Tailwind, @mysten/dapp-kit
 - **Data:** Tatum Data API (live 1h OHLCV), Tatum Sui gRPC (checkpoints, epoch), Binance public klines (historical backfill), CoinGecko (market overview)
 - **Memory:** Walrus Memory Mainnet via the `memwal` Python SDK
-- **LLM:** `agnes-3.0-flash` via yjs (OpenAI-compatible Chat Completions)
+- **LLM:** DeepSeek V4 Flash via vikey.ai (OpenAI-compatible Chat Completions, thinking disabled)
 
 ## Setup
 

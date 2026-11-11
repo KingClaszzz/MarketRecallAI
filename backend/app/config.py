@@ -25,9 +25,10 @@ class Settings(BaseSettings):
     memwal_server_url: str = "https://relayer.memory.walrus.xyz"
     memwal_max_writes_per_day: int = 150
 
-    llm_base_url: str = "https://api.yjs.im/v1"
+    llm_base_url: str = "https://api.vikey.ai/v1"
     llm_api_key: str = ""
-    llm_model: str = "agnes-3.0-flash"
+    llm_model: str = "deepseek/deepseek-v4-flash"
+    llm_disable_thinking: bool = True
 
     assets: list[str] = ["SUI", "WAL", "CETUS"]
     forecast_horizon_h: int = 4
